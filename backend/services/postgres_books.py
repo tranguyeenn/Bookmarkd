@@ -668,8 +668,8 @@ def clear_library_service(db: Session, confirm: bool, user_id: UUID):
     return {"deleted": deleted}
 
 
-def delete_book_by_id_service(db: Session, book_id: str, user_id: UUID):
-    book = get_book_by_isbn_uid(db, book_id, user_id)
+def delete_book_by_isbn_uid_service(db: Session, isbn_uid: str, user_id: UUID):
+    book = get_book_by_isbn_uid(db, isbn_uid, user_id)
 
     if book is None:
         raise HTTPException(status_code=404, detail="Book not found")

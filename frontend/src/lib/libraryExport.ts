@@ -18,10 +18,10 @@ export async function downloadLibraryCsv(): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
-export async function deleteBook(bookId: string): Promise<{ message: string }> {
+export async function deleteBook(isbnUid: string): Promise<{ message: string }> {
   assertDemoWritable();
-  const encodedId = encodeURIComponent(bookId);
-  return fetchJson<{ message: string }>(`/books/${encodedId}`, { method: "DELETE" });
+  const encodedIsbnUid = encodeURIComponent(isbnUid);
+  return fetchJson<{ message: string }>(`/books/${encodedIsbnUid}`, { method: "DELETE" });
 }
 
 export async function clearLibrary(): Promise<{ deleted: number }> {

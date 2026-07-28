@@ -8,14 +8,14 @@ from datetime import date, datetime, timedelta, timezone
 import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend import api
 from backend.auth.dependencies import get_current_user
 from backend.db.database import Base, get_db
-from backend.db.models import Book, MetadataJob, Profile, RecommendationFeedback
+from backend.db.models import Book, BookEmbedding, MetadataJob, Profile, ReadingActivity, RecommendationFeedback
 from backend.services.page_lookup import BookMetadata, GoogleBooksRateLimited, OpenLibraryTimeout
 from backend.services.page_count_lookup import PageCountResult
 from backend.services.recommendation import get_recommendation
@@ -184,6 +184,19 @@ class ApiTests(unittest.TestCase):
                 )
             )
         return stack
+
+    def test_backend_app_has_cors_and_delete_book_route(self):
+        has_delete_route = any(
+            route.path == "/books/{isbn_uid}" and "DELETE" in getattr(route, "methods", set())
+            for route in api.app.routes
+        )
+        has_cors_middleware = any(
+            getattr(middleware.cls, "__name__", "") == "CORSMiddleware"
+            for middleware in api.app.user_middleware
+        )
+
+        self.assertTrue(has_delete_route)
+        self.assertTrue(has_cors_middleware)
 
     def test_health_is_static_and_does_not_require_db_or_auth(self):
         def broken_dependency():
@@ -832,7 +845,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["results"][0]["Title"], "Keep")
 
-    def test_delete_book_by_id(self):
+    def test_delete_book_by_isbn_uid(self):
         _seed_book(title="Keep", authors="A", isbn_uid="keep-id")
         _seed_book(title="Remove", authors="B", isbn_uid="remove-id")
 
@@ -845,7 +858,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["results"][0]["ISBN/UID"], "keep-id")
 
-    def test_delete_book_by_id_does_not_trigger_external_or_background_work(self):
+    def test_delete_book_by_isbn_uid_does_not_trigger_external_or_background_work(self):
         _seed_book(title="Remove", authors="B", isbn_uid="remove-id")
 
         with self.external_work_guard():
@@ -854,7 +867,19 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"message": "Book deleted"})
 
-    def test_delete_book_by_id_cannot_delete_other_user_book(self):
+    def test_delete_book_by_isbn_uid_returns_404_for_nonexistent_book(self):
+        _seed_book(title="Keep", authors="A", isbn_uid="keep-id")
+
+        response = self.client.delete("/books/missing-id")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Book not found"})
+
+        payload = self.client.get("/books").json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["results"][0]["ISBN/UID"], "keep-id")
+
+    def test_delete_book_by_isbn_uid_cannot_delete_other_user_book(self):
         _seed_profile(
             user_id=OTHER_USER_ID,
             email="other@shelftxt.local",
@@ -889,6 +914,122 @@ class ApiTests(unittest.TestCase):
             db.close()
 
         self.assertIsNotNone(other_book)
+
+    def test_delete_book_cascades_reading_activity_and_clears_nullable_book_references(self):
+        book = _seed_book(title="Remove", authors="A", isbn_uid="remove-id")
+        db = TestingSessionLocal()
+        try:
+            db.execute(text("PRAGMA foreign_keys=ON"))
+            db.add(
+                ReadingActivity(
+                    user_id=TEST_USER_ID,
+                    book_id=book.id,
+                    activity_type="progress",
+                    pages_read_delta=12,
+                    progress_delta=4,
+                )
+            )
+            db.add(
+                BookEmbedding(
+                    id=UUID("10000000-0000-0000-0000-000000000001"),
+                    canonical_identity="library:remove-id",
+                    book_id=book.id,
+                    title="Remove",
+                    author="A",
+                    embedding=[0.1, 0.2],
+                    embedding_model="test",
+                    content_hash="hash",
+                )
+            )
+            db.add(
+                RecommendationFeedback(
+                    user_id=TEST_USER_ID,
+                    book_id=book.id,
+                    recommendation_id="book:remove-id",
+                    recommendation_identity="book:remove-id",
+                    canonical_title="Remove",
+                    canonical_author="A",
+                    feedback_type="not_interested",
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        response = self.client.delete("/books/remove-id")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"message": "Book deleted"})
+
+        db = TestingSessionLocal()
+        try:
+            self.assertEqual(
+                db.query(ReadingActivity).filter(ReadingActivity.book_id == book.id).count(),
+                0,
+            )
+            embedding = db.query(BookEmbedding).filter(BookEmbedding.canonical_identity == "library:remove-id").one()
+            feedback = db.query(RecommendationFeedback).filter(RecommendationFeedback.recommendation_id == "book:remove-id").one()
+            self.assertIsNone(embedding.book_id)
+            self.assertIsNone(feedback.book_id)
+        finally:
+            db.close()
+
+    def test_delete_book_path_uses_isbn_uid_not_database_id(self):
+        book = _seed_book(title="Keep", authors="A", isbn_uid="isbn-uid-value")
+
+        response = self.client.delete(f"/books/{book.id}")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Book not found"})
+
+        payload = self.client.get("/books").json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["results"][0]["ISBN/UID"], "isbn-uid-value")
+
+    def test_delete_book_404_includes_cors_headers_for_vercel_origin(self):
+        response = self.client.delete(
+            "/books/missing-id",
+            headers={"Origin": "https://shelftxt.vercel.app"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.headers.get("access-control-allow-origin"),
+            "https://shelftxt.vercel.app",
+        )
+
+    def test_delete_book_preflight_allows_localhost_origin(self):
+        response = self.client.options(
+            "/books/9788440630124",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "DELETE",
+                "Access-Control-Request-Headers": "Authorization, Content-Type",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("access-control-allow-origin"),
+            "http://localhost:3000",
+        )
+        self.assertEqual(response.headers.get("access-control-allow-credentials"), "true")
+        self.assertIn("DELETE", response.headers.get("access-control-allow-methods", ""))
+        allowed_headers = response.headers.get("access-control-allow-headers", "").lower()
+        self.assertIn("authorization", allowed_headers)
+        self.assertIn("content-type", allowed_headers)
+
+    def test_delete_book_404_includes_cors_headers_for_localhost_origin(self):
+        response = self.client.delete(
+            "/books/missing-id",
+            headers={"Origin": "http://localhost:3000"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.headers.get("access-control-allow-origin"),
+            "http://localhost:3000",
+        )
 
     def test_patch_move_to_dnf(self):
         _seed_book(

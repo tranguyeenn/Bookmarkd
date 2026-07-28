@@ -129,6 +129,25 @@ class Book(Base):
         back_populates="books",
     )
 
+    reading_activities: Mapped[list["ReadingActivity"]] = relationship(
+        "ReadingActivity",
+        back_populates="book",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    embeddings: Mapped[list["BookEmbedding"]] = relationship(
+        "BookEmbedding",
+        back_populates="book",
+        passive_deletes=True,
+    )
+
+    recommendation_feedback: Mapped[list["RecommendationFeedback"]] = relationship(
+        "RecommendationFeedback",
+        back_populates="book",
+        passive_deletes=True,
+    )
+
     read_status: Mapped[str | None] = mapped_column(
         String,
         nullable=True,
@@ -263,9 +282,14 @@ class BookEmbedding(Base):
 
     book_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("books.id"),
+        ForeignKey("books.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+
+    book: Mapped[Book | None] = relationship(
+        "Book",
+        back_populates="embeddings",
     )
 
     title: Mapped[str] = mapped_column(
@@ -351,9 +375,14 @@ class RecommendationFeedback(Base):
 
     book_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("books.id"),
+        ForeignKey("books.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+
+    book: Mapped[Book | None] = relationship(
+        "Book",
+        back_populates="recommendation_feedback",
     )
 
     recommendation_id: Mapped[str] = mapped_column(
@@ -470,9 +499,14 @@ class ReadingActivity(Base):
 
     book_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("books.id"),
+        ForeignKey("books.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
+    )
+
+    book: Mapped[Book | None] = relationship(
+        "Book",
+        back_populates="reading_activities",
     )
 
     activity_type: Mapped[str] = mapped_column(

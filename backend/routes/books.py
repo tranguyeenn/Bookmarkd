@@ -34,7 +34,7 @@ from backend.services.metadata_discovery import discover_books, likely_manual_du
 from backend.services.postgres_books import (
     add_book_service,
     clear_library_service,
-    delete_book_by_id_service,
+    delete_book_by_isbn_uid_service,
     delete_book_by_title_service,
     export_library_csv,
     backfill_page_counts_for_user_service,
@@ -270,10 +270,10 @@ def update_book_progress(
     return update_book_progress_by_id_service(db, book_id, body, current_user.id)
 
 
-@router.delete("/books/{book_id}")
-def delete_book_by_id_route(
-    book_id: str,
+@router.delete("/books/{isbn_uid}")
+def delete_book_by_isbn_uid_route(
+    isbn_uid: str,
     db: Session = Depends(get_db),
     current_user: Profile = Depends(get_current_user),
 ):
-    return delete_book_by_id_service(db, book_id, current_user.id)
+    return delete_book_by_isbn_uid_service(db, isbn_uid, current_user.id)

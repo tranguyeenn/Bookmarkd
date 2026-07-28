@@ -96,6 +96,15 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+ALLOWED_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://shelftxt.vercel.app",
+    "https://shelftxt.onrender.com",
+]
+
 
 @app.exception_handler(SQLAlchemyTimeoutError)
 async def sqlalchemy_timeout_handler(request, exc):
@@ -129,12 +138,7 @@ async def sqlalchemy_operational_error_handler(request, exc):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://shelftxt.vercel.app",
-        "https://shelftxt.onrender.com",
-    ],
+    allow_origins=ALLOWED_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
