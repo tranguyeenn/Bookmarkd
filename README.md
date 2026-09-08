@@ -43,6 +43,7 @@ CSV export remains available for backups and spreadsheet workflows.
 | **Ranking** | Custom scoring in `backend/ranking/`, features in `backend/preprocess/` |
 | **Persistence** | PostgreSQL for profiles and user-owned book CRUD (`backend/db/` + `backend/repository/postgres_books_repository.py`) |
 | **UI** | Vite, React, TypeScript |
+| **Mobile** | Flutter (iOS & Android) in [`mobile/`](mobile/) |
 | **Deploy** | Render (API), Vercel (frontend) |
 
 ---
