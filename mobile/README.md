@@ -52,3 +52,14 @@ flutter run --dart-define=SHELFTXT_BASE_URL=http://10.0.2.2:8000
 ```bash
 flutter test
 ```
+
+---
+
+## Architectural Pattern: MVVM
+
+The mobile client is engineered using the **Model-View-ViewModel (MVVM)** pattern:
+- **Model** (`models/`): Strongly typed data models (`Book`, `BooksPage`, `BookStatus`) with JSON serialization and progress calculation logic.
+- **View** (`screens/`, `widgets/`): Declarative UI widgets reacting to ViewModel updates via Flutter's `ListenableBuilder`, maintaining a clean separation between UI presentation and business logic.
+- **ViewModel** (`viewmodels/`): `ChangeNotifier` classes (`LibraryViewModel`) encapsulating state (`LibraryViewState`), search/status filtering, and backend coordination. 100% unit-tested independently of the widget tree.
+- **Services** (`services/`): API client layer managing HTTP requests, timeout handling, and typed exceptions (`ShelfTxtNetworkException`, `ShelfTxtHttpException`).
+

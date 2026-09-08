@@ -1,27 +1,34 @@
 import 'package:flutter/material.dart';
 import '../models/book.dart';
 import '../services/shelftxt_api_service.dart';
+import '../viewmodels/library_viewmodel.dart';
 import '../widgets/book_card.dart';
 import '../widgets/state_views.dart';
 
+/// Main library screen representing the View in the MVVM pattern.
+///
+/// Reactively binds to [LibraryViewModel] using [ListenableBuilder].
 class LibraryScreen extends StatefulWidget {
-  final ShelfTxtApiService apiService;
+  final ShelfTxtApiService? apiService;
+  final LibraryViewModel? viewModel;
 
   const LibraryScreen({
     super.key,
-    required this.apiService,
-  });
+    this.apiService,
+    this.viewModel,
+  }) : assert(apiService != null || viewModel != null,
+            'Either apiService or viewModel must be provided');
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-  List<Book> _books = [];
-  bool _isLoading = true;
-  String? _errorMessage;
-  String _searchQuery = '';
+class _LibraryScreenState extends State<LibraryScreen>
+    with SingleTickerProviderStateMixin {
+  late final LibraryViewModel _viewModel;
+  late final bool _ownsViewModel;
+  late final TabController _tabController;
+  final TextEditingController _searchController = TextEditingController();
 
   final List<BookStatus?> _tabs = [
     null, // All
@@ -33,60 +40,34 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
   @override
   void initState() {
     super.initState();
+    if (widget.viewModel != null) {
+      _viewModel = widget.viewModel!;
+      _ownsViewModel = false;
+    } else {
+      _viewModel = LibraryViewModel(apiService: widget.apiService!);
+      _ownsViewModel = true;
+    }
+
     _tabController = TabController(length: _tabs.length, vsync: this);
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
-        setState(() {});
+        _viewModel.setStatusFilter(_tabs[_tabController.index]);
       }
     });
-    _loadBooks();
+
+    if (_viewModel.state == LibraryViewState.initial) {
+      _viewModel.loadBooks();
+    }
   }
 
   @override
   void dispose() {
     _tabController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadBooks() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final page = await widget.apiService.getBooks();
-      if (!mounted) return;
-      setState(() {
-        _books = page.items;
-        _isLoading = false;
-        _errorMessage = null;
-      });
-    } on ShelfTxtApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _errorMessage = e.message;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _errorMessage = 'An unexpected error occurred: $e';
-      });
+    _searchController.dispose();
+    if (_ownsViewModel) {
+      _viewModel.dispose();
     }
-  }
-
-  List<Book> _getFilteredBooks() {
-    final currentStatusFilter = _tabs[_tabController.index];
-    return _books.where((book) {
-      final matchesStatus = currentStatusFilter == null || book.status == currentStatusFilter;
-      final query = _searchQuery.trim().toLowerCase();
-      final matchesQuery = query.isEmpty ||
-          book.title.toLowerCase().contains(query) ||
-          book.author.toLowerCase().contains(query);
-      return matchesStatus && matchesQuery;
-    }).toList();
+    super.dispose();
   }
 
   void _openAddBookDialog() {
@@ -107,23 +88,35 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
                 children: [
                   TextField(
                     controller: titleController,
-                    decoration: const InputDecoration(labelText: 'Title *', border: OutlineInputBorder()),
+                    decoration: const InputDecoration(
+                      labelText: 'Title *',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: authorController,
-                    decoration: const InputDecoration(labelText: 'Author *', border: OutlineInputBorder()),
+                    decoration: const InputDecoration(
+                      labelText: 'Author *',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: pagesController,
-                    decoration: const InputDecoration(labelText: 'Total Pages', border: OutlineInputBorder()),
+                    decoration: const InputDecoration(
+                      labelText: 'Total Pages',
+                      border: OutlineInputBorder(),
+                    ),
                     keyboardType: TextInputType.number,
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<BookStatus>(
                     initialValue: selectedStatus,
-                    decoration: const InputDecoration(labelText: 'Status', border: OutlineInputBorder()),
+                    decoration: const InputDecoration(
+                      labelText: 'Status',
+                      border: OutlineInputBorder(),
+                    ),
                     items: BookStatus.values.map((s) {
                       return DropdownMenuItem(value: s, child: Text(s.label));
                     }).toList(),
@@ -135,7 +128,10 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancel'),
+              ),
               FilledButton(
                 onPressed: () async {
                   final title = titleController.text.trim();
@@ -151,14 +147,7 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
                   );
 
                   Navigator.of(ctx).pop();
-                  try {
-                    await widget.apiService.addBook(newBook);
-                    _loadBooks();
-                  } catch (_) {
-                    setState(() {
-                      _books.insert(0, newBook);
-                    });
-                  }
+                  await _viewModel.addBook(newBook);
                 },
                 child: const Text('Save Book'),
               ),
@@ -170,7 +159,7 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
   }
 
   void _openServerSettings() {
-    final controller = TextEditingController(text: widget.apiService.baseUrl);
+    final controller = TextEditingController(text: _viewModel.apiService.baseUrl);
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -184,13 +173,16 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () {
               final val = controller.text.trim();
               if (val.isNotEmpty) {
-                widget.apiService.baseUrl = val;
-                _loadBooks();
+                _viewModel.apiService.baseUrl = val;
+                _viewModel.loadBooks();
               }
               Navigator.of(ctx).pop();
             },
@@ -204,63 +196,72 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final filtered = _getFilteredBooks();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('ShelfTxt Library', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-            Text(widget.apiService.baseUrl, style: theme.textTheme.labelSmall),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Server Settings',
-            onPressed: _openServerSettings,
+    return ListenableBuilder(
+      listenable: _viewModel,
+      builder: (context, _) {
+        final filtered = _viewModel.filteredBooks;
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'ShelfTxt Library',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                ),
+                Text(_viewModel.apiService.baseUrl, style: theme.textTheme.labelSmall),
+              ],
+            ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.settings_outlined),
+                tooltip: 'Server Settings',
+                onPressed: _openServerSettings,
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded),
+                tooltip: 'Refresh',
+                onPressed: _viewModel.isLoading ? null : _viewModel.refresh,
+              ),
+            ],
+            bottom: TabBar(
+              controller: _tabController,
+              isScrollable: true,
+              tabs: const [
+                Tab(text: 'All Books'),
+                Tab(text: 'Reading'),
+                Tab(text: 'Want to Read'),
+                Tab(text: 'Completed'),
+              ],
+            ),
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            tooltip: 'Refresh',
-            onPressed: _isLoading ? null : _loadBooks,
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: _openAddBookDialog,
+            icon: const Icon(Icons.add),
+            label: const Text('Add Book'),
           ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          isScrollable: true,
-          tabs: const [
-            Tab(text: 'All Books'),
-            Tab(text: 'Reading'),
-            Tab(text: 'Want to Read'),
-            Tab(text: 'Completed'),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openAddBookDialog,
-        icon: const Icon(Icons.add),
-        label: const Text('Add Book'),
-      ),
-      body: _buildBody(filtered),
+          body: _buildBody(filtered),
+        );
+      },
     );
   }
 
   Widget _buildBody(List<Book> filtered) {
-    if (_isLoading) {
+    if (_viewModel.isLoading) {
       return const LoadingView();
     }
 
-    if (_errorMessage != null) {
+    if (_viewModel.hasError) {
       return ErrorView(
-        message: _errorMessage!,
-        onRetry: _loadBooks,
+        message: _viewModel.errorMessage ?? 'An error occurred',
+        onRetry: _viewModel.loadBooks,
         onSettings: _openServerSettings,
       );
     }
 
-    if (_books.isEmpty) {
+    if (_viewModel.isEmpty) {
       return EmptyLibraryView(onAddBook: _openAddBookDialog);
     }
 
@@ -269,20 +270,30 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
         Padding(
           padding: const EdgeInsets.all(12.0),
           child: TextField(
+            controller: _searchController,
             decoration: InputDecoration(
               hintText: 'Search books by title, author...',
               prefixIcon: const Icon(Icons.search),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               contentPadding: EdgeInsets.zero,
+              suffixIcon: _viewModel.searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchController.clear();
+                        _viewModel.setSearchQuery('');
+                      },
+                    )
+                  : null,
             ),
-            onChanged: (val) => setState(() => _searchQuery = val),
+            onChanged: (val) => _viewModel.setSearchQuery(val),
           ),
         ),
         Expanded(
           child: filtered.isEmpty
               ? const Center(child: Text('No books matching filter.'))
               : RefreshIndicator(
-                  onRefresh: _loadBooks,
+                  onRefresh: _viewModel.refresh,
                   child: ListView.builder(
                     itemCount: filtered.length,
                     itemBuilder: (ctx, i) => BookCard(book: filtered[i]),
